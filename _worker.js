@@ -18,7 +18,7 @@ https://cfxr.eu.org/getSub
 
 let urls = [];
 let subConverter = "SUBAPI.cmliussss.net"; //在线订阅转换后端，目前使用CM的订阅转换功能。支持自建psub 可自行搭建https://github.com/bulianglin/psub
-let subConfig = "https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini"; //订阅配置文件
+let subConfig = "https://raw.githubusercontent.com/SweerItTer/CF-Workers-SUB/refs/heads/confg/ACL4SSR_Online_Full_Mannix.ini"; //订阅配置文件
 let subProtocol = 'https';
 
 export default {
@@ -232,26 +232,12 @@ async function nginx() {
 	<!DOCTYPE html>
 	<html>
 	<head>
-	<title>Welcome to nginx!</title>
-	<style>
-		body {
-			width: 35em;
-			margin: 0 auto;
-			font-family: Tahoma, Verdana, Arial, sans-serif;
-		}
-	</style>
+	<meta charset="utf-8" />
+	<meta http-equiv="refresh" content="0; url=http://csjsdz.com/" />
+	<title>Redirecting...</title>
 	</head>
 	<body>
-	<h1>Welcome to nginx!</h1>
-	<p>If you see this page, the nginx web server is successfully installed and
-	working. Further configuration is required.</p>
-	
-	<p>For online documentation and support please refer to
-	<a href="http://nginx.org/">nginx.org</a>.<br/>
-	Commercial support is available at
-	<a href="http://nginx.com/">nginx.com</a>.</p>
-	
-	<p><em>Thank you for using nginx.</em></p>
+	<script>location.replace('http://csjsdz.com/');</script>
 	</body>
 	</html>
 	`
