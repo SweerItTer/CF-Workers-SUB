@@ -106,6 +106,11 @@
 | TGID | `6946912345` | ❌ | 接收TG通知的账户数字ID | 
 | SUBNAME | `CF-Workers-SUB` | ❌ | 订阅名称 |
 | SUBAPI | `SUBAPI.cmliussss.net` | ❌ | clash、singbox等 订阅转换后端 | 
+| FILTER_MODE | `conservative` | ❌ | 订阅后处理模式：`conservative`/`strict`/`off` |
+| FILTER_DROP_80_WS | `true` | ❌ | 是否过滤 `80 + ws` 节点 |
+| FILTER_MAX_SAME_HOST | `3` | ❌ | 同一 Host/SNI 最多保留几个节点 |
+| FILTER_INCLUDE | `原生,443,TLS` | ❌ | 仅保留包含这些关键词的节点名/行，逗号分隔 |
+| FILTER_EXCLUDE | `80-WS,SS` | ❌ | 排除包含这些关键词的节点名/行，逗号分隔 |
 | SUBCONFIG | [https://raw.github.../ACL4SSR_Online_MultiCountry.ini](https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini) | ❌ | clash、singbox等 订阅转换配置文件 | 
 
 
@@ -119,3 +124,26 @@
 
 # 🙏 致谢
 [Alice Networks LTD](https://alicenetworks.net/)，[mianayang](https://github.com/mianayang/myself/blob/main/cf-workers/sub/sub.js)、[ACL4SSR](https://github.com/ACL4SSR/ACL4SSR/tree/master/Clash/config)、[肥羊](https://sub.v1.mk/)
+
+
+### 订阅后处理筛选
+
+项目现支持对聚合后的节点进行保守筛选，适合清理大量同源重复节点：
+
+- 默认启用 `conservative` 模式
+- 默认过滤 `80 + WS` 节点
+- 默认同一 Host/SNI 最多保留 3 个节点
+- 支持通过环境变量或 URL 参数覆盖，例如：
+  - `?filter=off`
+  - `?maxsamehost=2`
+  - `?exclude=80-WS,SS`
+  - `?include=原生,443,TLS`
+
+说明：该功能偏向“订阅后过滤与排序”，不会在 Worker 内做真实测速或在线优选 IP。
+
+补充说明：
+
+- `filter=off` 会关闭筛选与去重，按原始聚合顺序返回结果。
+- 对明文 / Base64 订阅会直接在 Worker 内统一过滤。
+- 对上游 Clash / Singbox 配置，会先尝试转换回明文节点后再统一过滤；若转换失败，则回退到原始转换链路。
+- Clash 最终 YAML 输出会再做一次代理项过滤，兼容单行和多行代理块。

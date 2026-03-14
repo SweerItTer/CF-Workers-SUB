@@ -40,6 +40,7 @@ export default {
 		}
 		subConfig = env.SUBCONFIG || subConfig;
 		FileName = env.SUBNAME || FileName;
+		const filterConfig = buildFilterConfig(url, env);
 
 		const currentDate = new Date();
 		currentDate.setHours(0, 0, 0, 0);
@@ -122,7 +123,7 @@ export default {
 
 			const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.()); // 去重
 			if (订阅链接数组.length > 0) {
-				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader);
+				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader, subProtocol, subConverter);
 				console.log(请求订阅响应内容);
 				req_data += 请求订阅响应内容[0].join('\n');
 				订阅转换URL += "|" + 请求订阅响应内容[1];
@@ -148,9 +149,8 @@ export default {
 			const utf8Decoder = new TextDecoder();
 			const text = utf8Decoder.decode(encodedData);
 
-			//去重
-			const uniqueLines = new Set(text.split('\n'));
-			const result = [...uniqueLines].join('\n');
+			// 过滤 + 去重
+			const result = buildPlainNodeResult(text, filterConfig);
 			//console.log(result);
 
 			let base64Data;
@@ -206,7 +206,7 @@ export default {
 				const subConverterResponse = await fetch(subConverterUrl, { headers: { 'User-Agent': userAgentHeader } });//订阅转换
 				if (!subConverterResponse.ok) return new Response(base64Data, { headers: responseHeaders });
 				let subConverterContent = await subConverterResponse.text();
-				if (订阅格式 == 'clash') subConverterContent = await clashFix(subConverterContent);
+				if (订阅格式 == 'clash') subConverterContent = filterClashProxies(await clashFix(subConverterContent), filterConfig);
 				// 只有非浏览器订阅才会返回SUBNAME
 				if (!userAgent.includes('mozilla')) responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(FileName)}`;
 				return new Response(subConverterContent, { headers: responseHeaders });
@@ -287,6 +287,152 @@ async function MD5MD5(text) {
 	return secondHex.toLowerCase();
 }
 
+
+function parseBool(value, fallback = true) {
+	if (value === undefined || value === null || value === '') return fallback;
+	const v = String(value).toLowerCase();
+	if (["1","true","yes","on","soft","conservative"].includes(v)) return true;
+	if (["0","false","no","off"].includes(v)) return false;
+	return fallback;
+}
+
+function parseCsv(value) {
+	if (!value) return [];
+	return String(value).split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function buildFilterConfig(url, env = {}) {
+	const mode = (url.searchParams.get('filter') || env.FILTER_MODE || 'conservative').toLowerCase();
+	const enabled = !['off','none','disabled','0','false'].includes(mode) && parseBool(env.FILTER_ENABLE ?? true, true);
+	return {
+		enabled,
+		mode: mode === 'strict' ? 'strict' : 'conservative',
+		drop80ws: parseBool(url.searchParams.get('drop80ws') ?? env.FILTER_DROP_80_WS, true),
+		maxSameHost: Math.max(1, parseInt(url.searchParams.get('maxsamehost') || env.FILTER_MAX_SAME_HOST || (mode === 'strict' ? '2' : '3'), 10) || 3),
+		excludeKeywords: parseCsv(url.searchParams.get('exclude') || env.FILTER_EXCLUDE),
+		includeKeywords: parseCsv(url.searchParams.get('include') || env.FILTER_INCLUDE),
+	};
+}
+
+function extractNodeHostKey(line) {
+	const s = line.toLowerCase();
+	const host = s.match(/[?&](host|sni|peer|servername)=([^&#]+)/)?.[2]
+		|| s.match(/host:\s*([^,}\s]+)/)?.[1]
+		|| s.match(/servername:\s*([^,}\s]+)/)?.[1]
+		|| s.match(/server:\s*([^,}\s]+)/)?.[1]
+		|| s.match(/@([^:/?#]+):\d+/)?.[1]
+		|| 'unknown';
+	return decodeURIComponent(String(host).replace(/^['"]|['"]$/g, ''));
+}
+
+function scoreNodeLine(line) {
+	const s = line.toLowerCase();
+	let score = 0;
+	if (s.includes(':443')) score += 50;
+	if (s.includes('security=tls') || s.includes('tls=true')) score += 40;
+	if (s.includes('type=ws') || s.includes('network: ws')) score += 10;
+	if (s.includes('type=trojan') || s.startswith?.('trojan://') || s.includes('trojan://')) score += 15;
+	if (s.includes('h2') || s.includes('xhttp')) score += 12;
+	if (s.includes(':80')) score -= 35;
+	if (s.includes('ss://') || s.includes('type: ss')) score -= 8;
+	if (s.includes('randomized')) score -= 2;
+	if (s.includes('chrome')) score += 1;
+	return score;
+}
+
+function passesKeywordFilter(line, cfg) {
+	const s = line.toLowerCase();
+	if (cfg.includeKeywords.length > 0 && !cfg.includeKeywords.some(k => s.includes(k.toLowerCase()))) return false;
+	if (cfg.excludeKeywords.some(k => s.includes(k.toLowerCase()))) return false;
+	const is80 = s.includes(':80') || /port:\s*80\b/.test(s);
+	const isWs = s.includes('type=ws') || s.includes('network: ws') || /network:\s*ws\b/.test(s);
+	if (cfg.drop80ws && is80 && isWs) return false;
+	return true;
+}
+
+function filterAndSortPlainNodes(lines, cfg) {
+	if (!cfg.enabled) return lines;
+	const filtered = lines.filter(x => x && x.includes('://')).filter(x => passesKeywordFilter(x, cfg));
+	filtered.sort((a,b) => scoreNodeLine(b) - scoreNodeLine(a));
+	const hostCount = new Map();
+	const out = [];
+	for (const line of filtered) {
+		const key = extractNodeHostKey(line);
+		const cnt = hostCount.get(key) || 0;
+		if (cnt >= cfg.maxSameHost) continue;
+		hostCount.set(key, cnt + 1);
+		out.push(line);
+	}
+	return out;
+}
+
+function buildPlainNodeResult(text, cfg) {
+	const lines = text.split('\n').filter(Boolean);
+	const filtered = filterAndSortPlainNodes(lines, cfg);
+	const resultLines = cfg.enabled ? [...new Set(filtered)] : filtered;
+	return resultLines.join('\n');
+}
+
+function filterClashProxies(content, cfg) {
+	if (!cfg.enabled || !content.includes('proxies:')) return content;
+	const lines = content.split(/\r?\n/);
+	const out = [];
+	const hostCount = new Map();
+
+	let inProxies = false;
+	let currentBlock = [];
+	let currentBlockOriginal = [];
+	const flushCurrentBlock = () => {
+		if (currentBlock.length === 0) return;
+		const blockText = currentBlock.map(line => line.trim()).join('\n');
+		const blockLines = currentBlockOriginal;
+		currentBlock = [];
+		currentBlockOriginal = [];
+		if (!passesKeywordFilter(blockText, cfg)) return;
+		const key = extractNodeHostKey(blockText);
+		const cnt = hostCount.get(key) || 0;
+		if (cnt >= cfg.maxSameHost) return;
+		hostCount.set(key, cnt + 1);
+		out.push(...blockLines);
+	};
+
+	for (const line of lines) {
+		const trim = line.trim();
+		if (!inProxies) {
+			out.push(line);
+			if (trim === 'proxies:') inProxies = true;
+			continue;
+		}
+
+		const isTopLevel = line.length > 0 && !/^\s/.test(line);
+		const isProxyStart = /^\s*-\s/.test(line);
+
+		if (isTopLevel) {
+			flushCurrentBlock();
+			inProxies = false;
+			out.push(line);
+			continue;
+		}
+
+		if (isProxyStart) {
+			flushCurrentBlock();
+			currentBlock = [trim];
+			currentBlockOriginal = [line];
+			continue;
+		}
+
+		if (currentBlock.length > 0) {
+			currentBlock.push(trim);
+			currentBlockOriginal.push(line);
+			continue;
+		}
+
+		out.push(line);
+	}
+	flushCurrentBlock();
+	return out.join('\n');
+}
+
 function clashFix(content) {
 	if (content.includes('wireguard') && !content.includes('remote-dns-resolve')) {
 		let lines;
@@ -352,7 +498,24 @@ async function proxyURL(proxyURL, url) {
 	return newResponse;
 }
 
-async function getSUB(api, request, 追加UA, userAgentHeader) {
+async function convertConfigSubscriptionToNodes(apiUrl, subProtocol, subConverter) {
+	const subConverterUrl = `${subProtocol}://${subConverter}/sub?target=mixed&url=${encodeURIComponent(apiUrl)}&insert=false&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+	try {
+		const subConverterResponse = await fetch(subConverterUrl, {
+			headers: { 'User-Agent': 'v2rayN/CF-Workers-SUB  (https://github.com/cmliu/CF-Workers-SUB)' }
+		});
+		if (!subConverterResponse.ok) return null;
+		const subConverterContent = await subConverterResponse.text();
+		if (subConverterContent.includes('://')) return subConverterContent;
+		if (isValidBase64(subConverterContent)) return base64Decode(subConverterContent);
+		return null;
+	} catch (error) {
+		console.error(`订阅转换为明文失败: ${apiUrl}`, error);
+		return null;
+	}
+}
+
+async function getSUB(api, request, 追加UA, userAgentHeader, subProtocol, subConverter) {
 	if (!api || api.length === 0) {
 		return [];
 	} else api = [...new Set(api)]; // 去重
@@ -366,7 +529,7 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 
 	try {
 		// 使用Promise.allSettled等待所有API请求完成，无论成功或失败
-		const responses = await Promise.allSettled(api.map(apiUrl => getUrl(request, apiUrl, 追加UA, userAgentHeader).then(response => response.ok ? response.text() : Promise.reject(response))));
+		const responses = await Promise.allSettled(api.map(apiUrl => getUrl(request, apiUrl, 追加UA, userAgentHeader, controller.signal).then(response => response.ok ? response.text() : Promise.reject(response))));
 
 		// 遍历所有响应
 		const modifiedResponses = responses.map((response, index) => {
@@ -401,11 +564,19 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 			if (response.status === 'fulfilled') {
 				const content = await response.value || 'null'; // 获取响应的内容
 				if (content.includes('proxies:')) {
-					//console.log('Clash订阅: ' + response.apiUrl);
-					订阅转换URLs += "|" + response.apiUrl; // Clash 配置
+					const plainNodes = await convertConfigSubscriptionToNodes(response.apiUrl, subProtocol, subConverter);
+					if (plainNodes) {
+						newapi += plainNodes + '\n';
+					} else {
+						订阅转换URLs += "|" + response.apiUrl; // Clash 配置兜底走原转换链路
+					}
 				} else if (content.includes('outbounds"') && content.includes('inbounds"')) {
-					//console.log('Singbox订阅: ' + response.apiUrl);
-					订阅转换URLs += "|" + response.apiUrl; // Singbox 配置
+					const plainNodes = await convertConfigSubscriptionToNodes(response.apiUrl, subProtocol, subConverter);
+					if (plainNodes) {
+						newapi += plainNodes + '\n';
+					} else {
+						订阅转换URLs += "|" + response.apiUrl; // Singbox 配置兜底走原转换链路
+					}
 				} else if (content.includes('://')) {
 					//console.log('明文订阅: ' + response.apiUrl);
 					newapi += content + '\n'; // 追加内容
@@ -430,7 +601,7 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 	return [订阅内容, 订阅转换URLs];
 }
 
-async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
+async function getUrl(request, targetUrl, 追加UA, userAgentHeader, signal) {
 	// 设置自定义 User-Agent
 	const newHeaders = new Headers(request.headers);
 	newHeaders.set("User-Agent", `${atob('djJyYXlOLzYuNDU=')} cmliu/CF-Workers-SUB ${追加UA}(${userAgentHeader})`);
@@ -441,6 +612,7 @@ async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
 		headers: newHeaders,
 		body: request.method === "GET" ? null : request.body,
 		redirect: "follow",
+		signal,
 		cf: {
 			// 忽略SSL证书验证
 			insecureSkipVerify: true,
@@ -458,7 +630,7 @@ async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
 	console.log(`请求体: ${request.method === "GET" ? null : request.body}`);
 
 	// 发送请求并返回响应
-	return fetch(modifiedRequest);
+	return fetch(modifiedRequest, { signal });
 }
 
 function isValidBase64(str) {
