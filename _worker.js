@@ -498,11 +498,12 @@ async function proxyURL(proxyURL, url) {
 	return newResponse;
 }
 
-async function convertConfigSubscriptionToNodes(apiUrl, subProtocol, subConverter) {
+async function convertConfigSubscriptionToNodes(apiUrl, subProtocol, subConverter, signal) {
 	const subConverterUrl = `${subProtocol}://${subConverter}/sub?target=mixed&url=${encodeURIComponent(apiUrl)}&insert=false&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
 	try {
 		const subConverterResponse = await fetch(subConverterUrl, {
-			headers: { 'User-Agent': 'v2rayN/CF-Workers-SUB  (https://github.com/cmliu/CF-Workers-SUB)' }
+			headers: { 'User-Agent': 'v2rayN/CF-Workers-SUB  (https://github.com/cmliu/CF-Workers-SUB)' },
+			signal
 		});
 		if (!subConverterResponse.ok) return null;
 		const subConverterContent = await subConverterResponse.text();
@@ -564,14 +565,14 @@ async function getSUB(api, request, 追加UA, userAgentHeader, subProtocol, subC
 			if (response.status === 'fulfilled') {
 				const content = await response.value || 'null'; // 获取响应的内容
 				if (content.includes('proxies:')) {
-					const plainNodes = await convertConfigSubscriptionToNodes(response.apiUrl, subProtocol, subConverter);
+					const plainNodes = await convertConfigSubscriptionToNodes(response.apiUrl, subProtocol, subConverter, controller.signal);
 					if (plainNodes) {
 						newapi += plainNodes + '\n';
 					} else {
 						订阅转换URLs += "|" + response.apiUrl; // Clash 配置兜底走原转换链路
 					}
 				} else if (content.includes('outbounds"') && content.includes('inbounds"')) {
-					const plainNodes = await convertConfigSubscriptionToNodes(response.apiUrl, subProtocol, subConverter);
+					const plainNodes = await convertConfigSubscriptionToNodes(response.apiUrl, subProtocol, subConverter, controller.signal);
 					if (plainNodes) {
 						newapi += plainNodes + '\n';
 					} else {
