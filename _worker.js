@@ -1,4 +1,3 @@
-
 // 部署完成后在网址后面加上这个，获取自建节点和机场聚合节点，/?token=auto或/auto或
 
 let mytoken = 'auto';
@@ -6,7 +5,7 @@ let guestToken = ''; //可以随便取，或者uuid生成，https://1024tools.co
 let BotToken = ''; //可以为空，或者@BotFather中输入/start，/newbot，并关注机器人
 let ChatID = ''; //可以为空，或者@userinfobot中获取，/start
 let TG = 0; //小白勿动， 开发者专用，1 为推送所有的访问信息，0 为不推送订阅转换后端的访问信息与异常访问
-let FileName = 'CF-Workers-SUB';
+let FileName = 'CF-Workers-SUB-auto';
 let SUBUpdateTime = 6; //自定义订阅更新时间，单位小时
 let total = 99;//TB
 let timestamp = 4102329600000;//2099-12-31
@@ -17,8 +16,8 @@ https://cfxr.eu.org/getSub
 `;
 
 let urls = [];
-let subConverter = "lrkxugzxhhyh.ap-northeast-1.clawcloudrun.com"; // 在线订阅转换后端，当前使用自建 subconverter
-let subConfig = "https://cdn.jsdelivr.net/gh/SweerItTer/CF-Workers-SUB@78316a9bafc2bfdbcce101089f2159ce9350ea86/ACL4SSR_Online_Full_Mannix.ini"; // 订阅配置文件
+let subConverter = "subapi.mouj.dpdns.org"; // 在线订阅转换后端
+let subConfig = "https://raw.githubusercontent.com/SweerItTer/CF-Workers-SUB/refs/heads/confg/ACL4SSR_Online_Full_Mannix.ini"; // 可选订阅配置文件；默认不注入策略组模板
 let subProtocol = 'https';
 
 export default {
@@ -128,7 +127,7 @@ export default {
 				req_data += 请求订阅响应内容[0].join('\n');
 				订阅转换URL += "|" + 请求订阅响应内容[1];
 				if (订阅格式 == 'base64' && !isSubConverterRequest && 请求订阅响应内容[1].includes('://')) {
-					subConverterUrl = `${subProtocol}://${subConverter}/sub?target=mixed&url=${encodeURIComponent(请求订阅响应内容[1])}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+					subConverterUrl = buildSubConverterUrl(subProtocol, subConverter, 'mixed', 请求订阅响应内容[1], subConfig, { new_name: 'true' });
 					try {
 						const subConverterResponse = await fetch(subConverterUrl, { headers: { 'User-Agent': 'v2rayN/CF-Workers-SUB  (https://github.com/cmliu/CF-Workers-SUB)' } });
 						if (subConverterResponse.ok) {
@@ -191,15 +190,15 @@ export default {
 			if (订阅格式 == 'base64' || token == fakeToken) {
 				return new Response(base64Data, { headers: responseHeaders });
 			} else if (订阅格式 == 'clash') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=clash&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+				subConverterUrl = buildSubConverterUrl(subProtocol, subConverter, 'clash', 订阅转换URL, subConfig, { new_name: 'true' });
 			} else if (订阅格式 == 'singbox') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=singbox&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+				subConverterUrl = buildSubConverterUrl(subProtocol, subConverter, 'singbox', 订阅转换URL, subConfig, { new_name: 'true' });
 			} else if (订阅格式 == 'surge') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=surge&ver=4&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+				subConverterUrl = buildSubConverterUrl(subProtocol, subConverter, 'surge', 订阅转换URL, subConfig, { ver: '4', new_name: 'true' });
 			} else if (订阅格式 == 'quanx') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=quanx&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&udp=true`;
+				subConverterUrl = buildSubConverterUrl(subProtocol, subConverter, 'quanx', 订阅转换URL, subConfig, { udp: 'true' });
 			} else if (订阅格式 == 'loon') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=loon&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
+				subConverterUrl = buildSubConverterUrl(subProtocol, subConverter, 'loon', 订阅转换URL, subConfig);
 			}
 			//console.log(订阅转换URL);
 			try {
@@ -304,11 +303,19 @@ function parseCsv(value) {
 function buildFilterConfig(url, env = {}) {
 	const mode = (url.searchParams.get('filter') || env.FILTER_MODE || 'conservative').toLowerCase();
 	const enabled = !['off','none','disabled','0','false'].includes(mode) && parseBool(env.FILTER_ENABLE ?? true, true);
+	const maxSameHostRaw = parseInt(url.searchParams.get('maxsamehost') || env.FILTER_MAX_SAME_HOST || '0', 10);
+	const dedupeModeRaw = (url.searchParams.get('dedupe') || env.FILTER_DEDUPE_MODE || 'ip').toLowerCase();
+	const maxSameIpRaw = parseInt(url.searchParams.get('maxsameip') || env.FILTER_MAX_SAME_IP || '1', 10);
 	return {
 		enabled,
 		mode: mode === 'strict' ? 'strict' : 'conservative',
-		drop80ws: parseBool(url.searchParams.get('drop80ws') ?? env.FILTER_DROP_80_WS, true),
-		maxSameHost: Math.max(1, parseInt(url.searchParams.get('maxsamehost') || env.FILTER_MAX_SAME_HOST || (mode === 'strict' ? '2' : '3'), 10) || 3),
+		// 默认不过滤 80+ws，避免误杀伪装节点；按需通过参数显式开启。
+		drop80ws: parseBool(url.searchParams.get('drop80ws') ?? env.FILTER_DROP_80_WS, false),
+		// 默认不按同 host/sni 限流；设置 >0 时才生效。
+		maxSameHost: Number.isFinite(maxSameHostRaw) && maxSameHostRaw > 0 ? maxSameHostRaw : 0,
+		// ip: 仅按完全相同 IP 去重；host/endpoint 作为可选兼容模式。
+		dedupeMode: ['ip', 'host', 'endpoint'].includes(dedupeModeRaw) ? dedupeModeRaw : 'ip',
+		maxSameIp: Number.isFinite(maxSameIpRaw) && maxSameIpRaw > 0 ? maxSameIpRaw : 1,
 		excludeKeywords: parseCsv(url.searchParams.get('exclude') || env.FILTER_EXCLUDE),
 		includeKeywords: parseCsv(url.searchParams.get('include') || env.FILTER_INCLUDE),
 	};
@@ -323,6 +330,53 @@ function extractNodeHostKey(line) {
 		|| s.match(/@([^:/?#]+):\d+/)?.[1]
 		|| 'unknown';
 	return decodeURIComponent(String(host).replace(/^['"]|['"]$/g, ''));
+}
+
+function extractNodeEndpointKey(line) {
+	const s = line.toLowerCase();
+	const pick = (...patterns) => {
+		for (const p of patterns) {
+			const m = s.match(p);
+			if (m?.[1]) return decodeURIComponent(String(m[1]).replace(/^['"]|['"]$/g, ''));
+		}
+		return '';
+	};
+	const scheme = pick(/^([a-z0-9+.-]+):\/\//);
+	const server = pick(
+		/server:\s*([^,}\s]+)/,
+		/@([^:/?#\s]+):\d+/,
+		/\/\/(?:[^@/]+@)?([^:/?#\s]+):\d+/
+	);
+	const port = pick(
+		/port:\s*(\d+)/,
+		/@[^:/?#\s]+:(\d+)/,
+		/\/\/(?:[^@/]+@)?[^:/?#\s]+:(\d+)/
+	);
+	const host = pick(/host:\s*([^,}\s]+)/, /[?&]host=([^&#]+)/);
+	const sni = pick(/servername:\s*([^,}\s]+)/, /[?&](?:sni|peer)=([^&#]+)/);
+	const path = pick(/path:\s*([^,}\s]+)/, /[?&]path=([^&#]+)/);
+	const uuid = pick(/uuid:\s*([^,}\s]+)/, /[?&]id=([^&#]+)/);
+	const password = pick(/password:\s*([^,}\s]+)/, /\/\/([^:@/?#\s]+):[^@/?#\s]+@/);
+	const network = pick(/network:\s*([^,}\s]+)/, /[?&]type=([^&#]+)/);
+	const security = pick(/security[:=]\s*([^,}\s&#]+)/, /[?&](?:security|encryption)=([^&#]+)/);
+	return [scheme, server, port, host, sni, path, uuid, password, network, security].join('|');
+}
+
+function isLiteralIp(host) {
+	if (!host) return false;
+	const h = String(host).trim().replace(/^\[|\]$/g, '');
+	if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return h.split('.').every(x => Number(x) >= 0 && Number(x) <= 255);
+	return /^[0-9a-f:]+$/i.test(h) && h.includes(':');
+}
+
+function extractNodeIpKey(line) {
+	const s = line.toLowerCase();
+	const host = s.match(/server:\s*([^,}\s]+)/)?.[1]
+		|| s.match(/@([^:/?#\s]+):\d+/)?.[1]
+		|| s.match(/\/\/(?:[^@/]+@)?([^:/?#\s]+):\d+/)?.[1]
+		|| '';
+	const parsed = decodeURIComponent(String(host).replace(/^['"]|['"]$/g, '').trim());
+	return isLiteralIp(parsed) ? parsed.toLowerCase() : '';
 }
 
 function scoreNodeLine(line) {
@@ -355,12 +409,23 @@ function filterAndSortPlainNodes(lines, cfg) {
 	const filtered = lines.filter(x => x && x.includes('://')).filter(x => passesKeywordFilter(x, cfg));
 	filtered.sort((a,b) => scoreNodeLine(b) - scoreNodeLine(a));
 	const hostCount = new Map();
+	const ipCount = new Map();
 	const out = [];
 	for (const line of filtered) {
-		const key = extractNodeHostKey(line);
-		const cnt = hostCount.get(key) || 0;
-		if (cnt >= cfg.maxSameHost) continue;
-		hostCount.set(key, cnt + 1);
+		if (cfg.dedupeMode === 'ip') {
+			const ipKey = extractNodeIpKey(line);
+			if (ipKey) {
+				const cnt = ipCount.get(ipKey) || 0;
+				if (cnt >= cfg.maxSameIp) continue;
+				ipCount.set(ipKey, cnt + 1);
+			}
+		}
+		if (cfg.maxSameHost > 0) {
+			const key = cfg.dedupeMode === 'host' ? extractNodeHostKey(line) : extractNodeEndpointKey(line);
+			const cnt = hostCount.get(key) || 0;
+			if (cnt >= cfg.maxSameHost) continue;
+			hostCount.set(key, cnt + 1);
+		}
 		out.push(line);
 	}
 	return out;
@@ -373,11 +438,123 @@ function buildPlainNodeResult(text, cfg) {
 	return resultLines.join('\n');
 }
 
+function buildSubConverterUrl(subProtocol, subConverter, target, sourceUrl, subConfig = '', extraParams = {}) {
+	const params = new URLSearchParams({
+		target,
+		url: sourceUrl,
+		insert: 'false',
+		emoji: 'true',
+		list: 'false',
+		tfo: 'false',
+		scv: 'true',
+		fdn: 'false',
+		sort: 'false',
+		...extraParams,
+	});
+	if (subConfig) params.set('config', subConfig);
+	return `${subProtocol}://${subConverter}/sub?${params.toString()}`;
+}
+
+function normalizeClashProxyName(name) {
+	return String(name || '').trim().replace(/^['"]|['"]$/g, '');
+}
+
+function extractClashProxyName(blockText) {
+	const match = blockText.match(/name:\s*([^,\n}]+)/i);
+	return match ? normalizeClashProxyName(match[1]) : '';
+}
+
+function isBuiltinClashProxyName(name) {
+	return ['DIRECT', 'REJECT', 'PASS', 'COMPATIBLE'].includes(normalizeClashProxyName(name).toUpperCase());
+}
+
+function collectClashGroupNames(lines) {
+	const names = new Set();
+	let inProxyGroups = false;
+	for (const line of lines) {
+		const trim = line.trim();
+		const isTopLevel = line.length > 0 && !/^\s/.test(line);
+		if (!inProxyGroups) {
+			if (trim === 'proxy-groups:') inProxyGroups = true;
+			continue;
+		}
+		if (isTopLevel) break;
+		const inlineMatch = line.match(/^\s*-\s*\{[^}]*\bname:\s*([^,}\n]+)/i);
+		if (inlineMatch) {
+			const name = normalizeClashProxyName(inlineMatch[1]);
+			if (name) names.add(name);
+			continue;
+		}
+		const multiMatch = line.match(/^\s*-\s*name:\s*(.+)$/i);
+		if (multiMatch) {
+			const name = normalizeClashProxyName(multiMatch[1]);
+			if (name) names.add(name);
+		}
+	}
+	return names;
+}
+
+function pruneInlineGroupProxyList(line, allowedNames) {
+	return line.replace(/proxies:\s*\[([^\]]*)\]/i, (_, list) => {
+		const filtered = list
+			.split(',')
+			.map(item => normalizeClashProxyName(item))
+			.filter(name => name && (allowedNames.has(name) || isBuiltinClashProxyName(name)));
+		return `proxies: [${filtered.join(', ')}]`;
+	});
+}
+
+function pruneClashRules(lines, allowedPolicyNames) {
+	const out = [];
+	let inRules = false;
+	for (const line of lines) {
+		const trim = line.trim();
+		const isTopLevel = line.length > 0 && !/^\s/.test(line);
+		if (!inRules) {
+			out.push(line);
+			if (trim === 'rules:') inRules = true;
+			continue;
+		}
+		if (isTopLevel) {
+			inRules = false;
+			out.push(line);
+			continue;
+		}
+		const ruleMatch = line.match(/^\s*-\s*(.+)$/);
+		if (!ruleMatch) {
+			out.push(line);
+			continue;
+		}
+		const ruleText = ruleMatch[1];
+		const parts = ruleText.split(',').map(x => x.trim());
+		if (parts.length < 2) {
+			out.push(line);
+			continue;
+		}
+		const last = normalizeClashProxyName(parts[parts.length - 1]);
+		const type = (parts[0] || '').toUpperCase();
+		if (type === 'MATCH') {
+			const matchTarget = normalizeClashProxyName(parts[1] || '');
+			if (matchTarget && (allowedPolicyNames.has(matchTarget) || isBuiltinClashProxyName(matchTarget))) {
+				out.push(line);
+			}
+			continue;
+		}
+		if (last && (allowedPolicyNames.has(last) || isBuiltinClashProxyName(last))) {
+			out.push(line);
+		}
+	}
+	return out;
+}
+
 function filterClashProxies(content, cfg) {
 	if (!cfg.enabled || !content.includes('proxies:')) return content;
 	const lines = content.split(/\r?\n/);
 	const out = [];
 	const hostCount = new Map();
+	const ipCount = new Map();
+	const allProxyNames = new Set();
+	const keptProxyNames = new Set();
 
 	let inProxies = false;
 	let currentBlock = [];
@@ -388,11 +565,24 @@ function filterClashProxies(content, cfg) {
 		const blockLines = currentBlockOriginal;
 		currentBlock = [];
 		currentBlockOriginal = [];
+		const proxyName = extractClashProxyName(blockText);
+		if (proxyName) allProxyNames.add(proxyName);
 		if (!passesKeywordFilter(blockText, cfg)) return;
-		const key = extractNodeHostKey(blockText);
-		const cnt = hostCount.get(key) || 0;
-		if (cnt >= cfg.maxSameHost) return;
-		hostCount.set(key, cnt + 1);
+		if (cfg.dedupeMode === 'ip') {
+			const ipKey = extractNodeIpKey(blockText);
+			if (ipKey) {
+				const cnt = ipCount.get(ipKey) || 0;
+				if (cnt >= cfg.maxSameIp) return;
+				ipCount.set(ipKey, cnt + 1);
+			}
+		}
+		if (cfg.maxSameHost > 0) {
+			const key = cfg.dedupeMode === 'host' ? extractNodeHostKey(blockText) : extractNodeEndpointKey(blockText);
+			const cnt = hostCount.get(key) || 0;
+			if (cnt >= cfg.maxSameHost) return;
+			hostCount.set(key, cnt + 1);
+		}
+		if (proxyName) keptProxyNames.add(proxyName);
 		out.push(...blockLines);
 	};
 
@@ -400,7 +590,8 @@ function filterClashProxies(content, cfg) {
 		const trim = line.trim();
 		if (!inProxies) {
 			out.push(line);
-			if (trim === 'proxies:') inProxies = true;
+			// 只在顶层 proxies 段进入节点过滤，避免把 proxy-groups 内的 proxies 列表当成节点段二次过滤。
+			if (trim === 'proxies:' && !/^\s/.test(line)) inProxies = true;
 			continue;
 		}
 
@@ -430,7 +621,83 @@ function filterClashProxies(content, cfg) {
 		out.push(line);
 	}
 	flushCurrentBlock();
-	return out.join('\n');
+
+	const synced = [];
+	let inProxyGroups = false;
+	let inGroupProxyList = false;
+	let proxyListIndent = 0;
+	const groupNames = collectClashGroupNames(out);
+	const removedProxyNames = new Set([...allProxyNames].filter(name => !keptProxyNames.has(name)));
+
+	for (const line of out) {
+		const trim = line.trim();
+		const indent = (line.match(/^\s*/) || [''])[0].length;
+		const isTopLevel = line.length > 0 && !/^\s/.test(line);
+
+		if (!inProxyGroups) {
+			synced.push(line);
+			if (trim === 'proxy-groups:') inProxyGroups = true;
+			continue;
+		}
+
+		if (isTopLevel) {
+			inProxyGroups = false;
+			inGroupProxyList = false;
+			synced.push(line);
+			continue;
+		}
+
+		if (inGroupProxyList) {
+			const isListItem = /^\s*-\s+/.test(line) && indent > proxyListIndent;
+			if (isListItem) {
+				const proxyName = normalizeClashProxyName(trim.replace(/^-+\s*/, ''));
+				const shouldKeep = proxyName && (
+					isBuiltinClashProxyName(proxyName) ||
+					groupNames.has(proxyName) ||
+					!removedProxyNames.has(proxyName)
+				);
+				if (shouldKeep) {
+					synced.push(line);
+				}
+				continue;
+			}
+
+			if (trim === '' || indent > proxyListIndent) {
+				synced.push(line);
+				continue;
+			}
+
+			inGroupProxyList = false;
+		}
+
+		if (/^\s*-\s*\{/.test(line) && /\bproxies:\s*\[/.test(line)) {
+			const pruned = line.replace(/proxies:\s*\[([^\]]*)\]/i, (_, list) => {
+				const filtered = list
+					.split(',')
+					.map(item => normalizeClashProxyName(item))
+					.filter(name => name && (
+						isBuiltinClashProxyName(name) ||
+						groupNames.has(name) ||
+						!removedProxyNames.has(name)
+					));
+				return `proxies: [${filtered.join(', ')}]`;
+			});
+			synced.push(pruned);
+			continue;
+		}
+
+		if (/^\s*proxies:\s*$/.test(line)) {
+			inGroupProxyList = true;
+			proxyListIndent = indent;
+			synced.push(line);
+			continue;
+		}
+
+		synced.push(line);
+	}
+
+	const allowedPolicies = new Set([...keptProxyNames, ...collectClashGroupNames(synced)]);
+	return pruneClashRules(synced, allowedPolicies).join('\n');
 }
 
 function clashFix(content) {
@@ -524,9 +791,8 @@ async function getSUB(api, request, 追加UA, userAgentHeader, subProtocol, subC
 	let 订阅转换URLs = "";
 	let 异常订阅 = "";
 	const controller = new AbortController(); // 创建一个AbortController实例，用于取消请求
-	const timeout = setTimeout(() => {
-		controller.abort(); // 2秒后取消所有请求
-	}, 2000);
+	const timeoutSignal = AbortSignal.timeout(3000);
+	timeoutSignal.addEventListener('abort', () => controller.abort(timeoutSignal.reason), { once: true });
 
 	try {
 		// 使用Promise.allSettled等待所有API请求完成，无论成功或失败
@@ -593,8 +859,6 @@ async function getSUB(api, request, 追加UA, userAgentHeader, subProtocol, subC
 		}
 	} catch (error) {
 		console.error(error); // 捕获并输出错误信息
-	} finally {
-		clearTimeout(timeout); // 清除定时器
 	}
 
 	const 订阅内容 = await ADD(newapi + 异常订阅); // 将处理后的内容转换为数组
